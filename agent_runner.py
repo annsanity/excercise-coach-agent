@@ -1,5 +1,6 @@
 from langchain.agents import initialize_agent, AgentType
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.schema import SystemMessage
 from tools import tools
 from memory import memory_store
 import os
@@ -15,13 +16,14 @@ llm = ChatGoogleGenerativeAI(
 SYSTEM_PROMPT = """
 You are a fitness coach agent that helps users with daily exercises. Follow this exact logic:
 
-1. If user has no last_exercise: Send a new exercise
+1. If user has no last_exercise: Send a new exercise using send_exercise tool
 2. If user has last_exercise but no feedback:
-   - If reminders_sent < 3: Send a reminder
-   - If reminders_sent >= 3: Check feedback and wait
-3. If user has feedback: Thank them and acknowledge completion
+   - If reminders_sent < 3: Send a reminder using send_reminder tool
+   - If reminders_sent >= 3: Use check_feedback tool and wait
+3. If user has feedback: Use check_feedback tool to thank them and acknowledge completion
 
 Always think step by step and use the appropriate tool based on the user's current state.
+Be encouraging and supportive in your responses.
 """
 
 agent = initialize_agent(
@@ -30,7 +32,11 @@ agent = initialize_agent(
     agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
     verbose=True,
     max_iterations=3,  # Prevent infinite loops
-    early_stopping_method="generate"
+    early_stopping_method="generate",
+    agent_kwargs={
+        "prefix": SYSTEM_PROMPT,
+        "format_instructions": "Use the following format:\n\nThought: think about what to do\nAction: the action to take\nAction Input: the input to the action\nObservation: the result of the action\n... (this Thought/Action/Action Input/Observation can repeat N times)\nThought: I now know the final answer\nFinal Answer: the final answer to the original input"
+    }
 )
 
 def run_agent_session(user_id: str) -> str:
@@ -39,9 +45,11 @@ def run_agent_session(user_id: str) -> str:
     
     # Create context for the agent
     context = f"""
+    Analyze this user's current state and take appropriate action:
+    
     User ID: {user_id}
     Current state:
-    - Last exercise: {session.get('last_exercise', 'None')}
+    - Last exercise sent: {session.get('last_exercise', 'None')}
     - Feedback received: {session.get('feedback', 'None')}
     - Reminders sent: {session.get('reminders_sent', 0)}
     - Scheduled time: {session.get('scheduled_time', 'None')}

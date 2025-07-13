@@ -1,6 +1,6 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.date import DateTrigger
 from agent_runner import run_agent_session
 from memory import memory_store
 import threading
@@ -44,22 +44,25 @@ def schedule_user_job(user_id: str, time_str: str):
 
 def schedule_reminder_jobs(user_id: str):
     """Schedule automatic reminders for user."""
-    def reminder_job():
-        session = memory_store.get(user_id)
-        if session.get("feedback"):
-            # User already provided feedback, cancel remaining reminders
-            cancel_reminder_jobs(user_id)
-            return
+    def create_reminder_job(reminder_num):
+        def reminder_job():
+            session = memory_store.get(user_id)
+            if session.get("feedback"):
+                # User already provided feedback, cancel remaining reminders
+                cancel_reminder_jobs(user_id)
+                return
+            
+            reminders_sent = session.get("reminders_sent", 0)
+            if reminders_sent >= 3:
+                print(f"Maximum reminders sent for user {user_id}")
+                cancel_reminder_jobs(user_id)
+                return
+            
+            print(f"Sending reminder {reminders_sent + 1} to user {user_id}")
+            response = run_agent_session(user_id)
+            print(f"Reminder response: {response}")
         
-        reminders_sent = session.get("reminders_sent", 0)
-        if reminders_sent >= 3:
-            print(f"Maximum reminders sent for user {user_id}")
-            cancel_reminder_jobs(user_id)
-            return
-        
-        print(f"Sending reminder {reminders_sent + 1} to user {user_id}")
-        response = run_agent_session(user_id)
-        print(f"Reminder response: {response}")
+        return reminder_job
     
     with lock:
         # Cancel existing reminder jobs
@@ -70,14 +73,15 @@ def schedule_reminder_jobs(user_id: str):
         reminder_jobs[user_id] = []
         
         for i, hours in enumerate(reminder_times):
+            run_time = datetime.now() + timedelta(hours=hours)
             job = scheduler.add_job(
-                reminder_job,
-                IntervalTrigger(hours=hours),
+                create_reminder_job(i + 1),
+                DateTrigger(run_date=run_time),  # Use DateTrigger for one-time execution
                 id=f"reminder_{user_id}_{i}",
-                replace_existing=True,
-                start_date=datetime.now() + timedelta(hours=hours)
+                replace_existing=True
             )
             reminder_jobs[user_id].append(job)
+            print(f"Scheduled reminder {i + 1} for user {user_id} at {run_time}")
 
 def cancel_reminder_jobs(user_id: str):
     """Cancel all reminder jobs for user."""
@@ -89,6 +93,7 @@ def cancel_reminder_jobs(user_id: str):
                 except:
                     pass  # Job might already be removed
             del reminder_jobs[user_id]
+            print(f"Cancelled all reminder jobs for user {user_id}")
 
 def cancel_user_job(user_id: str):
     """Cancel all jobs for user."""
